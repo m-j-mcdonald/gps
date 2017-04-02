@@ -71,35 +71,14 @@ try:
 
     # AgentROS
     BAXTER_AGENT_ROS = {
-        #TODO: It might be worth putting this in JSON/yaml format so C++
-        #      can read it.
-        'trial_command_topic': '',
-        'reset_command_topic': '',
-        'relax_command_topic': '',
-        'data_request_topic': '',
-        'sample_result_topic': '',
-        'trial_timeout': 20,  # Give this many seconds for a trial.
-        'reset_conditions': [],  # Defines reset modes + positions for
-                                 # trial and auxiliary arms.
-        'frequency': 20,
-        'end_effector_points': np.array([]),
-        #TODO: Actually pass in low gains and high gains and use both
-        #      for the position controller.
-        'pid_params': np.array([
-            2400.0, 0.0, 18.0, 4.0,
-            1200.0, 0.0, 20.0, 4.0,
-            1000.0, 0.0, 6.0, 4.0,
-            700.0, 0.0, 4.0, 4.0,
-            300.0, 0.0, 6.0, 2.0,
-            300.0, 0.0, 4.0, 2.0,
-            300.0, 0.0, 2.0, 2.0
-        ]),
+        'substeps': 1,
+        'reset_conditions': [],
     }
 except ImportError as e:
-    AGENT_ROS = {}
+    BAXTER_AGENT_ROS = {}
     LOGGER.debug('No ROS enabled: %s', e)
 except rospkg.common.ResourceNotFound as e:
-    AGENT_ROS = {}
+    BAXTER_AGENT_ROS = {}
     LOGGER.debug('No gps_agent_pkg: %s', e)
 
 

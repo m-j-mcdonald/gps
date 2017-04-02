@@ -8,23 +8,18 @@ import rospy
 from gps.agent.agent import Agent
 from gps.agent.agent_utils import generate_noise, setup
 from gps.agent.config import BAXTER_AGENT_ROS
-from gps.agent.ros_baxter.ros_utils import ServiceEmulator, msg_to_sample, \
-        policy_to_msg, tf_policy_to_action_msg, tf_obs_msg_to_numpy
-from gps.proto.gps_pb2 import TRIAL_ARM, AUXILIARY_ARM
-from gps_agent_pkg.msg import TrialCommand, SampleResult, PositionCommand, \
-        RelaxCommand, DataRequest, TfActionCommand, TfObsData
-try:
-    from gps.algorithm.policy.tf_policy import TfPolicy
-except ImportError:  # user does not have tf installed.
-    TfPolicy = None
-
-baxter_joint_names = ['_e0','_s0','_s1','_w0','_e1','_w1','_w2']
+from gps.agent.ros_baxter.baxter_utils import GPSBaxterInterface
+from gps.proto.gps_pb2 import JOINT_ANGLES, JOINT_VELOCITIES, \
+        END_EFFECTOR_POINTS, END_EFFECTOR_POINT_VELOCITIES, \
+        END_EFFECTOR_POINT_JACOBIANS, ACTION, END_EFFECTOR_POINTS_NO_TARGET, \
+        END_EFFECTOR_POINT_VELOCITIES_NO_TARGET
+from gps.sample.sample import Sample
 
 
 class BaxterAgentROS(Agent):
     """
-    All communication between the algorithms and ROS is done through
-    this class.
+    Communication between the algorithms and ROS is done through
+    this class for the Baxter robot.
     """
     def __init__(self, hyperparams, init_node=True):
         """
@@ -33,76 +28,62 @@ class BaxterAgentROS(Agent):
             hyperparams: Dictionary of hyperparameters.
             init_node: Whether or not to initialize a new ROS node.
         """
-        config = copy.deepcopy(AGENT_ROS)
+        config = copy.deepcopy(BAXTER_AGENT_ROS)
         config.update(hyperparams)
         Agent.__init__(self, config)
         if init_node:
             rospy.init_node('gps_agent_ros_node')
 
         self.baxter = GPSBaxterInterface()
-
-        self._seq_id = 0  # Used for setting seq in ROS commands.
+        self.trial_arm = self._hyperparams['trial_arm']
+        self.aux_arm = 'right' if self.trial_arm is 'left' else 'left'
 
         conditions = self._hyperparams['conditions']
 
+        conds = self._hyperparams['conditions']
+        for field in ('x0', 'x0var', 'reset_conditions'):
+            self._hyperparams[field] = setup(self._hyperparams[field], conds)
+
         self.x0 = []
-        for field in ('x0', 'ee_points_tgt', 'reset_conditions'):
-            self._hyperparams[field] = setup(self._hyperparams[field],
-                                             conditions)
-        self.x0 = self._hyperparams['x0']
+        for i in range(self._hyperparams['conditions']):
+            if END_EFFECTOR_POINTS in self.x_data_types:
+                eepts = np.array(self.baxter.get_ee_pose(self.trial_arm) + 
+                                 self.baxter.get_ee_euler_rot(self.trial_arm))
+                self.x0.append(
+                    np.concatenate([self._hyperparams['x0'][i], 
+                                    eepts, np.zeros_like(eepts)])
+                )
+            elif END_EFFECTOR_POINTS_NO_TARGET in self.x_data_types:
+                eepts = np.array(self.baxter.get_ee_pose(self.trial_arm) + 
+                                 self.baxter.get_ee_euler_rot(self.trial_arm))
+                eepts_notgt = np.delete(eepts, self._hyperparams['target_idx'])
+                self.x0.append(
+                    np.concatenate([self._hyperparams['x0'][i], 
+                                    eepts_notgt, np.zeros_like(eepts_notgt)])
+                )
+            else:
+                self.x0.append(self._hyperparams['x0'][i])
 
         r = rospy.Rate(1)
         r.sleep()
-
-        self.use_tf = False
-        self.observations_stale = True
-
-    def _get_next_seq_id(self):
-        self._seq_id = (self._seq_id + 1) % (2 ** 32)
-        return self._seq_id
-
-    def get_data(self, arm=TRIAL_ARM):
-        """
-        Request for the most recent value for data/sensor readings.
-        Returns entire sample report (all available data) in sample.
-        Args:
-            arm: TRIAL_ARM or AUXILIARY_ARM.
-        """
-        request = DataRequest()
-        request.id = self._get_next_seq_id()
-        request.arm = arm
-        request.stamp = rospy.get_rostime()
-        result_msg = self._data_service.publish_and_wait(request)
-        # TODO - Make IDs match, assert that they match elsewhere here.
-        sample = msg_to_sample(result_msg, self)
-        return sample
 
     def relax_arm(self, arm):
         """
         Relax one of the arms of the robot.
         Args:
-            arm: Either TRIAL_ARM or AUXILIARY_ARM.
+            arm: Either 'left' or 'right'.
         """
-        torques = {arm+joint:0 for joint in baxter_joint_names}
-        self.baxter.set_baxter_joint_efforts(arm, torques)
+        values = [0 for _ in range(7)]
+        self.baxter.set_baxter_joint_efforts(arm, values)
 
-    def reset_arm(self, arm, mode, data):
+    def reset_arm(self, arm, data):
         """
         Issues a position command to an arm.
         Args:
-            arm: Either TRIAL_ARM or AUXILIARY_ARM.
-            mode: An integer code (defined in gps_pb2).
+            arm: Either 'left' or 'right'.
             data: An array of floats.
         """
-        reset_command = PositionCommand()
-        reset_command.mode = mode
-        reset_command.data = data
-        reset_command.pd_gains = self._hyperparams['pid_params']
-        reset_command.arm = arm
-        timeout = self._hyperparams['trial_timeout']
-        reset_command.id = self._get_next_seq_id()
-        self._reset_service.publish_and_wait(reset_command, timeout=timeout)
-        #TODO: Maybe verify that you reset to the correct position.
+        self.baxter.set_joint_angles(arm, data)
 
     def reset(self, condition):
         """
@@ -111,10 +92,8 @@ class BaxterAgentROS(Agent):
             condition: An index into hyperparams['reset_conditions'].
         """
         condition_data = self._hyperparams['reset_conditions'][condition]
-        self.reset_arm(TRIAL_ARM, condition_data[TRIAL_ARM]['mode'],
-                       condition_data[TRIAL_ARM]['data'])
-        self.reset_arm(AUXILIARY_ARM, condition_data[AUXILIARY_ARM]['mode'],
-                       condition_data[AUXILIARY_ARM]['data'])
+        self.reset_arm(self.trial_arm, condition_data[self.trial_arm]['data'])
+        self.reset_arm(self.aux_arm, condition_data[self.aux_arm]['data'])
         time.sleep(2.0)  # useful for the real robot, so it stops completely
 
     def sample(self, policy, condition, verbose=True, save=True, noisy=True):
@@ -129,93 +108,106 @@ class BaxterAgentROS(Agent):
         Returns:
             sample: A Sample object.
         """
-        if TfPolicy is not None:  # user has tf installed.
-            if isinstance(policy, TfPolicy):
-                self._init_tf(policy.dU)
-
+        # Create new sample, populate first time step.
         self.reset(condition)
-        # Generate noise.
+        new_sample = self._init_sample()
+        X = self._hyperparams['x0'][condition]
+        U = np.zeros([self.T, self.dU])
         if noisy:
             noise = generate_noise(self.T, self.dU, self._hyperparams)
         else:
             noise = np.zeros((self.T, self.dU))
 
-        # Execute trial.
-        trial_command = TrialCommand()
-        trial_command.id = self._get_next_seq_id()
-        trial_command.controller = policy_to_msg(policy, noise)
-        trial_command.T = self.T
-        trial_command.id = self._get_next_seq_id()
-        trial_command.frequency = self._hyperparams['frequency']
-        ee_points = self._hyperparams['end_effector_points']
-        trial_command.ee_points = ee_points.reshape(ee_points.size).tolist()
-        trial_command.ee_points_tgt = \
-                self._hyperparams['ee_points_tgt'][condition].tolist()
-        trial_command.state_datatypes = self._hyperparams['state_include']
-        trial_command.obs_datatypes = self._hyperparams['state_include']
+        if np.any(self._hyperparams['x0var'][condition] > 0):
+            x0n = self._hyperparams['x0var'] * \
+                    np.random.randn(self._hyperparams['x0var'].shape)
+            X += x0n
 
-        if self.use_tf is False:
-            sample_msg = self._trial_service.publish_and_wait(
-                trial_command, timeout=self._hyperparams['trial_timeout']
-            )
-            sample = msg_to_sample(sample_msg, self)
-            if save:
-                self._samples[condition].append(sample)
-            return sample
-        else:
-            self._trial_service.publish(trial_command)
-            sample_msg = self.run_trial_tf(policy, time_to_run=self._hyperparams['trial_timeout'])
-            sample = msg_to_sample(sample_msg, self)
-            if save:
-                self._samples[condition].append(sample)
-            return sample
+        # Take the sample.
+        for t in range(self.T):
+            X_t = new_sample.get_X(t=t)
+            obs_t = new_sample.get_obs(t=t)
+            baxter_U = policy.act(X_t, obs_t, t, noise[t, :])
+            U[t, :] = baxter_U
 
-    def run_trial_tf(self, policy, time_to_run=5):
-        """ Run an async controller from a policy. The async controller receives observations from ROS subscribers
-         and then uses them to publish actions."""
-        should_stop = False
-        consecutive_failures = 0
-        start_time = time.time()
-        while should_stop is False:
-            if self.observations_stale is False:
-                consecutive_failures = 0
-                last_obs = tf_obs_msg_to_numpy(self._tf_subscriber_msg)
-                action_msg = tf_policy_to_action_msg(self.dU,
-                                                     self._get_new_action(policy, last_obs),
-                                                     self.current_action_id)
-                self._tf_publish(action_msg)
-                self.observations_stale = True
-                self.current_action_id += 1
-            else:
-                rospy.sleep(0.01)
-                consecutive_failures += 1
-                if time.time() - start_time > time_to_run and consecutive_failures > 5:
-                    # we only stop when we have run for the trial time and are no longer receiving obs.
-                    should_stop = True
-        rospy.sleep(0.25)  # wait for finished trial to come in.
-        result = self._trial_service._subscriber_msg
-        return result  # the trial has completed. Here is its message.
+            if (t + 1) < self.T:
+                for _ in range(self._hyperparams['substeps']):
+                    self.baxter.set_joint_efforts(self.trial_arm, baxter_U)
+                self._set_sample(new_sample, t)
 
-    def _get_new_action(self, policy, obs):
-        return policy.act(None, obs, None, None)
+        new_sample.set(ACTION, U)
+        if save:
+            self._samples[condition].append(new_sample)
+        return new_sample
 
-    def _tf_callback(self, message):
-        self._tf_subscriber_msg = message
-        self.observations_stale = False
+    def _init_sample(self):
+        """
+        Construct a new sample and fill in the first time step.
+        """
+        sample = Sample(self)
 
-    def _tf_publish(self, pub_msg):
-        """ Publish a message without waiting for response. """
-        self._pub.publish(pub_msg)
+        # Initialize sample
+        sample.set(JOINT_ANGLES, 
+                   np.array(self.baxter.get_joint_angles(self.trial_arm)), 
+                   t=0)
 
-    def _init_tf(self, dU):
-        self._tf_subscriber_msg = None
-        self.observations_stale = True
-        self.current_action_id = 1
-        self.dU = dU
-        if self.use_tf is False:  # init pub and sub if this init has not been called before.
-            self._pub = rospy.Publisher('/gps_controller_sent_robot_action_tf', TfActionCommand)
-            self._sub = rospy.Subscriber('/gps_obs_tf', TfObsData, self._tf_callback)
-            r = rospy.Rate(0.5)  # wait for publisher/subscriber to kick on.
-            r.sleep()
-        self.use_tf = True
-        self.observations_stale = True
+        sample.set(JOINT_VELOCITIES, 
+                   np.array(self.baxter.get_joint_velocities(self.trial_arm)), 
+                   t=0)
+        
+        eepts = np.array(self.baxter.get_ee_pose(self.trial_arm) + 
+                         self.baxter.get_ee_euler_rot(self.trial_arm))
+        sample.set(END_EFFECTOR_POINTS, eepts, t=0)
+        sample.set(END_EFFECTOR_POINT_VELOCITIES, np.zeros_like(eepts), t=0)
+
+        if (END_EFFECTOR_POINTS_NO_TARGET in self._hyperparams['obs_include']):
+            sample.set(END_EFFECTOR_POINTS_NO_TARGET, 
+                       np.delete(eepts, self._hyperparams['target_idx']), 
+                       t=0)
+            
+            sample.set(END_EFFECTOR_POINT_VELOCITIES_NO_TARGET, 
+                       np.delete(np.zeros_like(eepts), 
+                       self._hyperparams['target_idx']), 
+                       t=0)
+        
+        sample.set(END_EFFECTOR_POINT_JACOBIANS, 
+                   np.array(self.baxter.get_ee_jac(self.trial_arm)), 
+                   t=0)
+
+        return sample
+
+    def _set_sample(self, sample, t):
+        """
+        Set the data for a sample for one time step.
+        Args:
+            sample: Sample object to set data for.
+            t: Time step to set for sample.
+        """
+        sample.set(JOINT_ANGLES, 
+                   np.array(self.baxter.get_joint_angles(self.trial_arm)), 
+                   t=t+1)
+
+        sample.set(JOINT_VELOCITIES, 
+                   np.array(self.baxter.get_joint_velocities(self.trial_arm)), 
+                   t=t+1)
+
+        cur_eepts_pose = self.baxter.get_ee_pose(self.trial_arm)
+        cur_eepts_rot = self.baxter.get_ee_euler_rot(self.trial_arm)
+        cur_eepts = np.array(cur_eepts_pose + cur_eepts_rot)
+        sample.set(END_EFFECTOR_POINTS, cur_eepts, t=t+1)
+        eept_vels = np.array(self.baxter.get_ee_vel(self.trial_arm))
+        sample.set(END_EFFECTOR_POINT_VELOCITIES, eept_vels, t=t+1)
+
+        if (END_EFFECTOR_POINTS_NO_TARGET in self._hyperparams['obs_include']):
+            sample.set(END_EFFECTOR_POINTS_NO_TARGET, np.delete(cur_eepts, 
+                       self._hyperparams['target_idx']), 
+                       t=t+1)
+            
+            sample.set(END_EFFECTOR_POINT_VELOCITIES_NO_TARGET, 
+                       np.delete(eept_vels, self._hyperparams['target_idx']), 
+                       t=t+1)
+
+        sample.set(END_EFFECTOR_POINT_JACOBIANS, 
+                   np.array(self.baxter.get_ee_jac(self.trial_arm)), 
+                   t=t+1)
+        
