@@ -3,8 +3,6 @@ from baxter_interface import CHECK_VERSION, limb, RobotEnable
 from baxter_pykdl import baxter_kinematics
 import tf
 
-baxter_joint_names = ['_s0','_s1','_e0','_e1','_w0','_w1','_w2']
-
 # TODO: Add gripper functionality
 class GPSBaxterInterface(object):
     def __init__(self):
@@ -137,6 +135,7 @@ class GPSBaxterInterface(object):
         """
         limb: String 'left' or 'right'
         values: List of numerical values to map to joints using above ordering
+                Order '_s0','_s1','_e0','_e1','_w0','_w1','_w2'
         -----
         Returns a dictionary with joint_name:value
         """
