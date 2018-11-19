@@ -60,7 +60,11 @@ class GMM(object):
         logobs = -0.5*np.ones((N, K))*D*np.log(2*np.pi)
         for i in range(K):
             mu, sigma = self.mu[i], self.sigma[i]
-            L = scipy.linalg.cholesky(sigma, lower=True)
+            try:
+                L = scipy.linalg.cholesky(sigma, lower=True)
+            except:
+                pass
+                # import ipdb; ipdb.set_trace()
             logobs[:, i] -= np.sum(np.log(np.diag(L)))
 
             diff = (data - mu).T

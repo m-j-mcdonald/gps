@@ -36,7 +36,7 @@ class Algorithm(object):
 
         # Grab a few values from the agent.
         agent = self._hyperparams['agent']
-        self.T = self._hyperparams['T'] = agent.T
+        self.T = self._hyperparams['T'] # = agent.T
         self.dU = self._hyperparams['dU'] = agent.dU
         self.dX = self._hyperparams['dX'] = agent.dX
         self.dO = self._hyperparams['dO'] = agent.dO
@@ -66,6 +66,7 @@ class Algorithm(object):
         self.traj_opt = hyperparams['traj_opt']['type'](
             hyperparams['traj_opt']
         )
+        '''
         if type(hyperparams['cost']) == list:
             self.cost = [
                 hyperparams['cost'][i]['type'](hyperparams['cost'][i])
@@ -76,6 +77,8 @@ class Algorithm(object):
                 hyperparams['cost']['type'](hyperparams['cost'])
                 for _ in range(self.M)
             ]
+        '''
+        self.cost = hyperparams['cost']['type'](hyperparams['cost'])
         self.base_kl_step = self._hyperparams['kl_step']
 
     @abc.abstractmethod

@@ -130,10 +130,11 @@ def init_pd(hyperparams):
     else:
         K = -config['pos_gains'] * np.tile(
             np.hstack([
-                np.eye(dU) * Kp, np.eye(dU) * Kv,
-                np.zeros((dU, dX - dU*2))
+                np.eye(dU) * Kp,
+                np.zeros((dU, dX - dU))
             ]), [T, 1, 1]
         )
+
     k = np.tile(-K[0, :, :].dot(x0), [T, 1])
     PSig = config['init_var'] * np.tile(np.eye(dU), [T, 1, 1])
     cholPSig = np.sqrt(config['init_var']) * np.tile(np.eye(dU), [T, 1, 1])

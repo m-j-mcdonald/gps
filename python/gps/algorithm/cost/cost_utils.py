@@ -6,6 +6,8 @@ RAMP_CONSTANT = 1
 RAMP_LINEAR = 2
 RAMP_QUADRATIC = 3
 RAMP_FINAL_ONLY = 4
+RAMP_REVERSE_LINEAR = 5
+RAMP_REVERSE_QUADRATIC = 6
 
 
 def get_ramp_multiplier(ramp_option, T, wp_final_multiplier=1.0):
@@ -23,6 +25,10 @@ def get_ramp_multiplier(ramp_option, T, wp_final_multiplier=1.0):
     elif ramp_option == RAMP_FINAL_ONLY:
         wpm = np.zeros(T)
         wpm[T-1] = 1.0
+    elif ramp_option == RAMP_REVERSE_LINEAR:
+        wpm = (np.arange(T, 0, step=-1, dtype=np.float32) + 1) / T
+    elif ramp_option == RAMP_REVERSE_QUADRATIC:
+        wpm = ((np.arange(T, 0, step=-1, dtype=np.float32) + 1) / T) ** 2
     else:
         raise ValueError('Unknown cost ramp requested!')
     wpm[-1] *= wp_final_multiplier
@@ -53,8 +59,12 @@ def evall1l2term(wp, d, Jd, Jdd, l1, l2, alpha):
     dscls = d * (wp ** 2)
 
     # Compute total cost.
-    l = 0.5 * np.sum(dsclsq ** 2, axis=1) * l2 + \
-            np.sqrt(alpha + np.sum(dscl ** 2, axis=1)) * l1
+    with np.errstate(invalid='raise'):
+        try:
+            l = 0.5 * np.sum(dsclsq ** 2, axis=1) * l2 + \
+                    np.sqrt(alpha + np.sum(dscl ** 2, axis=1)) * l1
+        except:
+            import ipdb; ipdb.set_trace()
 
     # First order derivative terms.
     d1 = dscl * l2 + (
