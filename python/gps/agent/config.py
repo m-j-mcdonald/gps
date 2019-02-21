@@ -60,6 +60,9 @@ except ImportError as e:
 except rospkg.common.ResourceNotFound as e:
     AGENT_ROS = {}
     LOGGER.debug('No gps_agent_pkg: %s', e)
+except AttributeError as e:
+    AGENT_ROS = {}
+    LOGGER.debug('Problem loading gps_agent_pkg: %s', e)
 
 
 # AgentMuJoCo
