@@ -53,16 +53,26 @@ class TfPolicy(Policy):
         """
 
         # Normalize obs.
+        if np.any(np.isnan(obs)):
+            raise Exception('Nans passed to action in observation')
         if len(obs.shape) == 1:
             obs = np.expand_dims(obs, axis=0)
+
+        obs = obs.copy()
         obs[:, self.x_idx] = obs[:, self.x_idx].dot(self.scale) + self.bias
         # with tf.device(self.device_string):
         #     action_mean = self.sess.run(self.act_op, feed_dict={self.obs_tensor: obs})
         action_mean = self.sess.run(self.act_op, feed_dict={self.obs_tensor: obs})
+        if np.all(np.abs(action_mean) < 1e-5): print('WARNING: Action mean from policy too close to zero')
+        if np.any(np.isnan(action_mean)):
+            raise Exception('Nans in action mean from neural net')
         if noise is None:
             u = action_mean
         else:
             u = action_mean + self.chol_pol_covar.T.dot(noise)
+            if np.any(np.isnan(u)):
+                raise Exception('Nans from policy chol_pol_covar or noise')
+
         return u[0]  # the DAG computations are batched by default, but we use batch size 1.
 
     def get_features(self, obs):

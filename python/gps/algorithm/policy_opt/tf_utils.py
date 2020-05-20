@@ -149,11 +149,15 @@ class TfSolver:
         final_values = np.concatenate([values[i] for i in range(len(values))])
         return final_values
 
-    def __call__(self, feed_dict, sess, device_string="/cpu:0", use_fc_solver=False):
+    def __call__(self, feed_dict, sess, device_string="/cpu:0", use_fc_solver=False, train=True):
         with tf.device(device_string):
-            if use_fc_solver:
-                loss = sess.run([self.loss_scalar, self.fc_solver_op], feed_dict)
+            if train:
+                if use_fc_solver:
+                    loss = sess.run([self.loss_scalar, self.fc_solver_op], feed_dict)
+                else:
+                    loss = sess.run([self.loss_scalar, self.solver_op], feed_dict)
+                return loss[0]
             else:
-                loss = sess.run([self.loss_scalar, self.solver_op], feed_dict)
-            return loss[0]
+                loss = sess.run(self.loss_scalar, feed_dict)
+                return loss
 
