@@ -74,6 +74,7 @@ class TfSolver:
         self.momentum = momentum
         self.solver_name = solver_name
         self.loss_scalar = loss_scalar
+        self._loss_scalar = self.loss_scalar
         if self.lr_policy != 'fixed':
             raise NotImplementedError('learning rate policies other than fixed are not implemented')
 
@@ -153,11 +154,11 @@ class TfSolver:
         with tf.device(device_string):
             if train:
                 if use_fc_solver:
-                    loss = sess.run([self.loss_scalar, self.fc_solver_op], feed_dict)
+                    loss = sess.run([self._loss_scalar, self.fc_solver_op], feed_dict)
                 else:
-                    loss = sess.run([self.loss_scalar, self.solver_op], feed_dict)
+                    loss = sess.run([self._loss_scalar, self.solver_op], feed_dict)
                 return loss[0]
             else:
-                loss = sess.run(self.loss_scalar, feed_dict)
+                loss = sess.run(self._loss_scalar, feed_dict)
                 return loss
 
