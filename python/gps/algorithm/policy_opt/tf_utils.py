@@ -151,14 +151,13 @@ class TfSolver:
         return final_values
 
     def __call__(self, feed_dict, sess, device_string="/cpu:0", use_fc_solver=False, train=True):
-        with tf.device(device_string):
-            if train:
-                if use_fc_solver:
-                    loss = sess.run([self._loss_scalar, self.fc_solver_op], feed_dict)
-                else:
-                    loss = sess.run([self._loss_scalar, self.solver_op], feed_dict)
-                return loss[0]
+        if train:
+            if use_fc_solver:
+                loss = sess.run([self._loss_scalar, self.fc_solver_op], feed_dict)
             else:
-                loss = sess.run(self._loss_scalar, feed_dict)
-                return loss
+                loss = sess.run([self._loss_scalar, self.solver_op], feed_dict)
+            return loss[0]
+        else:
+            loss = sess.run(self._loss_scalar, feed_dict)
+            return loss
 
